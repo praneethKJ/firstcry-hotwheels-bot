@@ -17,7 +17,7 @@ def send_telegram(msg):
             data={"chat_id": CHAT_ID, "text": msg},
             timeout=10
         )
-        time.sleep(0.8)  # prevent Telegram rate-limit
+        time.sleep(1)  # prevent rate-limit
     except Exception as e:
         print("Telegram error:", e)
 
@@ -27,7 +27,6 @@ def send_telegram(msg):
 # =========================
 URL = "https://www.firstcry.com/search.aspx?q=hot+wheels"
 DATA_FILE = "seen.json"
-CHECK_INTERVAL = 120  # 2 minutes
 
 
 # =========================
@@ -39,14 +38,15 @@ REAL_BRANDS = [
     "lamborghini","pagani","bugatti","mclaren","aston martin",
     "alfa romeo","subaru","mitsubishi","dodge","jeep","pontiac",
     "volvo","renault","bentley","koenigsegg","jaguar","land rover",
-    "maserati","lexus","acura","mini"
+    "maserati","lexus","mini"
 ]
 
 FANTASY_KEYWORDS = [
     "twin mill","bone shaker","street wiener","pixel shaker",
     "madfast","ain't fare","quick bite","power rocket",
     "layin low","driftn break","cruise bruiser",
-    "el viento","feline lucky","shark","dragon","skull"
+    "el viento","feline lucky","shark","dragon","skull",
+    "rodger dodger"
 ]
 
 BIKE_KEYWORDS = [
@@ -79,20 +79,20 @@ def is_valid_product(title: str) -> bool:
     if "hot wheels" not in t:
         return False
 
-    if any(f in t for f in FANTASY_KEYWORDS):
+    if any(x in t for x in FANTASY_KEYWORDS):
         return False
 
-    if any(b in t for b in BIKE_KEYWORDS):
+    if any(x in t for x in BIKE_KEYWORDS):
         return False
 
-    if not any(b in t for b in REAL_BRANDS):
+    if not any(x in t for x in REAL_BRANDS):
         return False
 
     return True
 
 
 # =========================
-# CORE CHECK (NEW ITEMS ONLY)
+# CORE CHECK
 # =========================
 def check():
     seen = load_seen()
@@ -100,16 +100,18 @@ def check():
     new_items = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
         page = browser.new_page()
-
         page.goto(URL, timeout=60000)
         page.wait_for_timeout(8000)
 
-        # Scroll to load products
-        for _ in range(5):
-            page.mouse.wheel(0, 3000)
-            page.wait_for_timeout(2000)
+        # scroll to load more products
+        for _ in range(10):
+            page.mouse.wheel(0, 4000)
+            page.wait_for_timeout(1500)
 
         links = page.query_selector_all("a[href]")
         print("Total links found:", len(links))
@@ -127,41 +129,32 @@ def check():
             if href.startswith("/"):
                 href = "https://www.firstcry.com" + href
 
-            # FIRST RUN → SAVE ONLY
-            if first_run:
-                seen[href] = True
-                continue
-
-            # NEW LISTING
             if href not in seen:
                 seen[href] = True
-                new_items.append(f"{title}\n{href}")
+                if not first_run:
+                    new_items.append(f"{title}\n{href}")
 
         browser.close()
 
     save_seen(seen)
 
-    # SEND ALERTS ONLY AFTER FIRST RUN
-    if not first_run and new_items:
-        send_telegram("🆕 NEW Hot Wheels Listing:\n\n" + "\n\n".join(new_items[:10]))
-
-    print(
-        "Baseline run completed (no alerts)"
-        if first_run else
-        f"New items found: {len(new_items)}"
-    )
+    if first_run:
+        print("Baseline saved, no alerts sent.")
+    elif new_items:
+        send_telegram("🆕 NEW Hot Wheels detected:\n\n" + "\n\n".join(new_items[:10]))
+        print(f"Sent {len(new_items)} new alerts")
+    else:
+        print("No new items found")
 
 
 # =========================
 # LOOP
 # =========================
 if __name__ == "__main__":
-    send_telegram("🤖 Hot Wheels NEW listing bot started")
-
+    send_telegram("🤖 Hot Wheels FirstCry bot STARTED and monitoring")
     while True:
         try:
             check()
         except Exception as e:
             print("ERROR:", e)
-
-        time.sleep(CHECK_INTERVAL)
+        time.sleep(120)  # every 2 minutes
